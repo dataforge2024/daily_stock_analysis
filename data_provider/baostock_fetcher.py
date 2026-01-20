@@ -52,7 +52,7 @@ class BaostockFetcher(BaseFetcher):
     """
     
     name = "BaostockFetcher"
-    priority = 3
+    priority = 0  # ⭐ 最稳定，优先使用
     
     def __init__(self):
         """初始化 BaostockFetcher"""

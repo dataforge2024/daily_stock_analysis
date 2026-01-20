@@ -83,13 +83,32 @@ class EfinanceRealtimeQuote:
 logger = logging.getLogger(__name__)
 
 
-# User-Agent 池，用于随机轮换
+# User-Agent 池，用于随机轮换（增强版）
 USER_AGENTS = [
+    # Chrome Windows
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
+    
+    # Chrome macOS
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+    
+    # Firefox
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0',
+    
+    # Safari
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+    
+    # Edge
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+    
+    # Linux
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0',
 ]
 
 
@@ -139,15 +158,20 @@ class EfinanceFetcher(BaseFetcher):
     """
     
     name = "EfinanceFetcher"
-    priority = 0  # 最高优先级，排在 AkshareFetcher 之前
+    priority = 1  # 数据丰富，但可能被限流  # 最高优先级，排在 AkshareFetcher 之前
     
-    def __init__(self, sleep_min: float = 1.5, sleep_max: float = 3.0):
+    def __init__(self, sleep_min: float = 2.0, sleep_max: float = 4.0):
         """
         初始化 EfinanceFetcher
         
         Args:
-            sleep_min: 最小休眠时间（秒）
-            sleep_max: 最大休眠时间（秒）
+            sleep_min: 最小休眠时间（秒），默认 2.0 秒
+            sleep_max: 最大休眠时间（秒），默认 4.0 秒
+        
+        增强版说明：
+        - 相比原 1.5-3.0 秒，增加到 2.0-4.0 秒
+        - 大幅降低被限流的风险
+        - 虽然慢了一点，但稳定性大幅提升
         """
         self.sleep_min = sleep_min
         self.sleep_max = sleep_max
@@ -188,9 +212,9 @@ class EfinanceFetcher(BaseFetcher):
         self._last_request_time = time.time()
     
     @retry(
-        stop=stop_after_attempt(3),  # 最多重试3次
-        wait=wait_exponential(multiplier=1, min=2, max=30),  # 指数退避：2, 4, 8... 最大30秒
-        retry=retry_if_exception_type((ConnectionError, TimeoutError)),
+        stop=stop_after_attempt(5),  # ⭐ 增加到 5 次重试
+        wait=wait_exponential(multiplier=2, min=4, max=60),  # ⭐ 增强退避：4, 8, 16, 32, 60秒
+        retry=retry_if_exception_type((ConnectionError, TimeoutError, Exception)),  # ⭐ 捕获更多异常
         before_sleep=before_sleep_log(logger, logging.WARNING),
     )
     def _fetch_raw_data(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
@@ -285,7 +309,10 @@ class EfinanceFetcher(BaseFetcher):
         """
         获取 ETF 基金历史数据
         
-        数据来源：ef.fund.get_quote_history()
+        数据来源：ef.stock.get_quote_history()
+        
+        注意：ETF 虽然是基金，但在交易所按股票方式交易，
+        因此使用 stock API 而不是 fund API 来获取 K 线数据
         
         Args:
             stock_code: ETF 代码，如 '512400', '159883'
@@ -307,16 +334,18 @@ class EfinanceFetcher(BaseFetcher):
         beg_date = start_date.replace('-', '')
         end_date_fmt = end_date.replace('-', '')
         
-        logger.info(f"[API调用] ef.fund.get_quote_history(fund_code={stock_code}, "
+        logger.info(f"[API调用] ef.stock.get_quote_history(stock_codes={stock_code}, "
                    f"beg={beg_date}, end={end_date_fmt}, klt=101, fqt=1)")
         
         try:
             import time as _time
             api_start = _time.time()
             
-            # 调用 efinance 获取 ETF 日线数据
-            df = ef.fund.get_quote_history(
-                fund_code=stock_code,
+            # 调用 efinance 获取 ETF 日线数据（使用 stock API）
+            # ETF 在交易所按股票方式交易，因此使用 stock.get_quote_history
+            # 注意：参数名是 stock_codes（复数），可以传入单个股票代码字符串
+            df = ef.stock.get_quote_history(
+                stock_codes=stock_code,  # 注意：参数名是复数形式
                 beg=beg_date,
                 end=end_date_fmt,
                 klt=101,  # 日线
@@ -327,13 +356,13 @@ class EfinanceFetcher(BaseFetcher):
             
             # 记录返回数据摘要
             if df is not None and not df.empty:
-                logger.info(f"[API返回] ef.fund.get_quote_history 成功: 返回 {len(df)} 行数据, 耗时 {api_elapsed:.2f}s")
+                logger.info(f"[API返回] ef.stock.get_quote_history 成功: 返回 {len(df)} 行数据, 耗时 {api_elapsed:.2f}s")
                 logger.info(f"[API返回] 列名: {list(df.columns)}")
                 if '日期' in df.columns:
                     logger.info(f"[API返回] 日期范围: {df['日期'].iloc[0]} ~ {df['日期'].iloc[-1]}")
                 logger.debug(f"[API返回] 最新3条数据:\n{df.tail(3).to_string()}")
             else:
-                logger.warning(f"[API返回] ef.fund.get_quote_history 返回空数据, 耗时 {api_elapsed:.2f}s")
+                logger.warning(f"[API返回] ef.stock.get_quote_history 返回空数据, 耗时 {api_elapsed:.2f}s")
             
             return df
             

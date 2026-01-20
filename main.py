@@ -46,11 +46,12 @@ from storage import get_db, DatabaseManager
 from data_provider import DataFetcherManager
 from data_provider.akshare_fetcher import AkshareFetcher, RealtimeQuote, ChipDistribution
 from analyzer import GeminiAnalyzer, AnalysisResult, STOCK_NAME_MAP
-from notification import NotificationService, NotificationChannel, send_daily_report
+from notification import NotificationService, NotificationChannel, send_daily_report, send_stock_recommendation, send_portfolio_advice
 from search_service import SearchService, SearchResponse
-from enums import ReportType
 from stock_analyzer import StockTrendAnalyzer, TrendAnalysisResult
 from market_analyzer import MarketAnalyzer
+from stock_selector import StockSelector, StockPool, select_stocks
+from portfolio_advisor import PortfolioAdvisor, PositionConfig, analyze_portfolio
 
 # 配置日志格式
 LOG_FORMAT = '%(asctime)s | %(levelname)-8s | %(name)-20s | %(message)s'
@@ -425,10 +426,9 @@ class StockAnalysisPipeline:
     
     def process_single_stock(
         self, 
-        code: str, 
+        code: str,
         skip_analysis: bool = False,
-        single_stock_notify: bool = False,
-        report_type: ReportType = ReportType.SIMPLE
+        single_stock_notify: bool = False
     ) -> Optional[AnalysisResult]:
         """
         处理单只股票的完整流程
@@ -445,7 +445,6 @@ class StockAnalysisPipeline:
             code: 股票代码
             skip_analysis: 是否跳过 AI 分析
             single_stock_notify: 是否启用单股推送模式（每分析完一只立即推送）
-            report_type: 报告类型枚举
             
         Returns:
             AnalysisResult 或 None
@@ -476,17 +475,8 @@ class StockAnalysisPipeline:
                 # 单股推送模式（#55）：每分析完一只股票立即推送
                 if single_stock_notify and self.notifier.is_available():
                     try:
-                        # 根据报告类型选择生成方法
-                        if report_type == ReportType.FULL:
-                            # 完整报告：使用决策仪表盘格式
-                            report_content = self.notifier.generate_dashboard_report([result])
-                            logger.info(f"[{code}] 使用完整报告格式")
-                        else:
-                            # 精简报告：使用单股报告格式（默认）
-                            report_content = self.notifier.generate_single_stock_report(result)
-                            logger.info(f"[{code}] 使用精简报告格式")
-                        
-                        if self.notifier.send(report_content):
+                        single_report = self.notifier.generate_single_stock_report(result)
+                        if self.notifier.send(single_report):
                             logger.info(f"[{code}] 单股推送成功")
                         else:
                             logger.warning(f"[{code}] 单股推送失败")
@@ -805,85 +795,174 @@ def run_full_analysis(
     stock_codes: Optional[List[str]] = None
 ):
     """
-    执行完整的分析流程（个股 + 大盘复盘）
+    执行完整的分析流程（推荐股票 + 个股分析 + 调仓建议 + 大盘复盘）
     
-    这是定时任务调用的主函数
+    流程：
+    1. 如果配置了股票池，生成每日推荐股票
+    2. 如果配置了自选股，运行个股深度分析
+    3. 如果配置了自选股，生成调仓建议
+    4. 如果启用大盘复盘，生成市场分析
     """
     try:
-        # 命令行参数 --single-notify 覆盖配置（#55）
+        # 命令行参数 --single-notify 覆盖配置
         if getattr(args, 'single_notify', False):
             config.single_stock_notify = True
         
-        # 创建调度器
-        pipeline = StockAnalysisPipeline(
-            config=config,
-            max_workers=args.workers
-        )
+        # === 1. 每日推荐股票（如果配置了股票池）===
+        if config.stock_pools and config.recommend_enabled:
+            logger.info("=" * 60)
+            logger.info("开始执行：每日推荐股票")
+            logger.info("=" * 60)
+            
+            try:
+                # 检查是否启用测试模式
+                test_mode = os.getenv('TEST_MODE', 'false').lower() == 'true'
+                test_sample_size = int(os.getenv('TEST_SAMPLE_SIZE', '30'))
+                
+                if test_mode:
+                    logger.warning(f"⚠️  测试模式已启用，将随机抽取 {test_sample_size} 只股票进行测试")
+                
+                selection_result = select_stocks(
+                    pools=config.stock_pools,
+                    test_mode=test_mode,
+                    test_sample_size=test_sample_size
+                )
+                
+                if selection_result and selection_result.selected_stocks:
+                    logger.info(f"选股完成，推荐 {len(selection_result.selected_stocks)} 只股票")
+                    
+                    # 推送推荐股票
+                    if not args.no_notify:
+                        send_stock_recommendation(selection_result)
+                    
+                    # 打印推荐列表
+                    logger.info("\n" + selection_result.format_report())
+                else:
+                    logger.warning("选股未找到符合条件的股票")
+                    
+            except Exception as e:
+                logger.error(f"每日推荐股票失败: {e}")
         
-        # 1. 运行个股分析
-        results = pipeline.run(
-            stock_codes=stock_codes,
-            dry_run=args.dry_run,
-            send_notification=not args.no_notify
-        )
+        # === 2. 个股深度分析（如果配置了自选股）===
+        results = []
+        if config.stock_list:
+            logger.info("=" * 60)
+            logger.info("开始执行：个股深度分析")
+            logger.info("=" * 60)
+            
+            # 创建调度器
+            pipeline = StockAnalysisPipeline(
+                config=config,
+                max_workers=args.workers
+            )
+            
+            # 运行个股分析
+            results = pipeline.run(
+                stock_codes=stock_codes or config.stock_list,
+                dry_run=args.dry_run,
+                send_notification=not args.no_notify
+            )
+            
+            # 输出摘要
+            if results:
+                logger.info("\n===== 个股分析结果摘要 =====")
+                for r in sorted(results, key=lambda x: x.sentiment_score, reverse=True):
+                    emoji = r.get_emoji()
+                    logger.info(
+                        f"{emoji} {r.name}({r.code}): {r.operation_advice} | "
+                        f"评分 {r.sentiment_score} | {r.trend_prediction}"
+                    )
         
-        # 2. 运行大盘复盘（如果启用且不是仅个股模式）
+        # === 3. 调仓建议（如果配置了自选股）===
+        if config.stock_list and config.portfolio_advice_enabled:
+            logger.info("=" * 60)
+            logger.info("开始执行：持仓调仓建议")
+            logger.info("=" * 60)
+            
+            try:
+                portfolio_advice = analyze_portfolio(
+                    stock_list=config.stock_list,
+                    position_ratios=config.position_ratios
+                )
+                
+                if portfolio_advice and portfolio_advice.advices:
+                    logger.info(f"调仓分析完成，共 {len(portfolio_advice.advices)} 只持仓")
+                    
+                    # 推送调仓建议
+                    if not args.no_notify:
+                        send_portfolio_advice(portfolio_advice)
+                    
+                    # 打印调仓建议
+                    logger.info("\n" + portfolio_advice.format_report())
+                else:
+                    logger.warning("调仓分析未生成建议")
+                    
+            except Exception as e:
+                logger.error(f"调仓建议生成失败: {e}")
+        
+        # === 4. 大盘复盘（如果启用）===
         market_report = ""
         if config.market_review_enabled and not args.no_market_review:
-            # 只调用一次，并获取结果
-            review_result = run_market_review(
-                notifier=pipeline.notifier,
-                analyzer=pipeline.analyzer,
-                search_service=pipeline.search_service
-            )
-            # 如果有结果，赋值给 market_report 用于后续飞书文档生成
-            if review_result:
-                market_report = review_result
+            logger.info("=" * 60)
+            logger.info("开始执行：大盘复盘")
+            logger.info("=" * 60)
+            
+            try:
+                # 创建通知服务和分析器（如果还没有）
+                notifier = NotificationService()
+                analyzer = None
+                search_service = None
+                
+                if config.gemini_api_key:
+                    analyzer = GeminiAnalyzer(api_key=config.gemini_api_key)
+                
+                if config.bocha_api_keys or config.tavily_api_keys or config.serpapi_keys:
+                    search_service = SearchService(
+                        bocha_keys=config.bocha_api_keys,
+                        tavily_keys=config.tavily_api_keys,
+                        serpapi_keys=config.serpapi_keys
+                    )
+                
+                review_result = run_market_review(notifier, analyzer, search_service)
+                if review_result:
+                    market_report = review_result
+                    
+            except Exception as e:
+                logger.error(f"大盘复盘失败: {e}")
         
-        # 输出摘要
-        if results:
-            logger.info("\n===== 分析结果摘要 =====")
-            for r in sorted(results, key=lambda x: x.sentiment_score, reverse=True):
-                emoji = r.get_emoji()
-                logger.info(
-                    f"{emoji} {r.name}({r.code}): {r.operation_advice} | "
-                    f"评分 {r.sentiment_score} | {r.trend_prediction}"
-                )
-        
-        logger.info("\n任务执行完成")
-
-        # === 新增：生成飞书云文档 ===
+        # === 5. 生成飞书云文档（如果配置）===
         try:
             feishu_doc = FeishuDocManager()
             if feishu_doc.is_configured() and (results or market_report):
                 logger.info("正在创建飞书云文档...")
 
-                # 1. 准备标题 "01-01 13:01大盘复盘"
+                # 准备标题
                 tz_cn = timezone(timedelta(hours=8))
                 now = datetime.now(tz_cn)
-                doc_title = f"{now.strftime('%Y-%m-%d %H:%M')} 大盘复盘"
+                doc_title = f"{now.strftime('%Y-%m-%d %H:%M')} 每日分析报告"
 
-                # 2. 准备内容 (拼接个股分析和大盘复盘)
+                # 准备内容
                 full_content = ""
 
-                # 添加大盘复盘内容（如果有）
+                # 添加大盘复盘
                 if market_report:
                     full_content += f"# 📈 大盘复盘\n\n{market_report}\n\n---\n\n"
 
-                # 添加个股决策仪表盘（使用 NotificationService 生成）
+                # 添加个股分析
                 if results:
-                    dashboard_content = pipeline.notifier.generate_dashboard_report(results)
+                    dashboard_content = NotificationService().generate_dashboard_report(results)
                     full_content += f"# 🚀 个股决策仪表盘\n\n{dashboard_content}"
 
-                # 3. 创建文档
+                # 创建文档
                 doc_url = feishu_doc.create_daily_doc(doc_title, full_content)
                 if doc_url:
                     logger.info(f"飞书云文档创建成功: {doc_url}")
-                    # 可选：将文档链接也推送到群里
-                    pipeline.notifier.send(f"[{now.strftime('%Y-%m-%d %H:%M')}] 复盘文档创建成功: {doc_url}")
+                    NotificationService().send(f"📄 [{now.strftime('%Y-%m-%d %H:%M')}] 分析报告: {doc_url}")
 
         except Exception as e:
             logger.error(f"飞书文档生成失败: {e}")
+        
+        logger.info("\n✅ 所有任务执行完成")
         
     except Exception as e:
         logger.exception(f"分析流程执行失败: {e}")

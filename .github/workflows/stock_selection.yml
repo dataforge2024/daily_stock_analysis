@@ -1,0 +1,200 @@
+# GitHub Actions 智能选股工作流配置
+
+name: AI Smart Stock Selection
+
+# 触发条件
+on:
+  # 定时触发（每个交易日收盘后运行）
+  schedule:
+    # 工作日 15:30 运行（北京时间，UTC+8）
+    # Cron 格式：分 时 日 月 周
+    # 注意：GitHub Actions 使用 UTC 时间，需要减 8 小时
+    - cron: '30 7 * * 1-5'  # UTC 7:30 = 北京时间 15:30（周一到周五）
+  
+  # 手动触发
+  workflow_dispatch:
+    inputs:
+      stock_pool:
+        description: '股票池选择'
+        required: true
+        default: 'hs300'
+        type: choice
+        options:
+          - hs300      # 沪深300
+          - zz500      # 中证500
+          - all        # 全市场
+      
+      top_n:
+        description: '推荐股票数量'
+        required: true
+        default: '3'
+        type: choice
+        options:
+          - '3'
+          - '5'
+          - '10'
+      
+      test_mode:
+        description: '测试模式（随机抽取少量股票）'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      
+      test_sample_size:
+        description: '测试模式样本数量'
+        required: false
+        default: '30'
+        type: choice
+        options:
+          - '20'
+          - '30'
+          - '50'
+
+# 环境变量
+env:
+  PYTHON_VERSION: '3.12'
+  TZ: 'Asia/Shanghai'  # 设置时区为北京时间
+
+# 作业定义
+jobs:
+  stock-selection:
+    name: 智能选股分析
+    runs-on: ubuntu-latest
+    
+    # 超时设置（防止卡死）
+    timeout-minutes: 60
+    
+    steps:
+      # 1. 检出代码
+      - name: 📥 检出代码
+        uses: actions/checkout@v4
+      
+      # 2. 设置 Python 环境
+      - name: 🐍 设置 Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'  # 缓存依赖
+      
+      # 3. 安装系统依赖（如果需要）
+      - name: 📦 安装系统依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhdf5-dev
+      
+      # 4. 安装 Python 依赖
+      - name: 📦 安装 Python 依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      # 5. 配置环境变量
+      - name: ⚙️ 配置环境
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          TEST_MODE: ${{ github.event.inputs.test_mode || 'false' }}
+          TEST_SAMPLE_SIZE: ${{ github.event.inputs.test_sample_size || '30' }}
+        run: |
+          # 创建 .env 文件
+          cat > .env << EOF
+          # AI API Keys
+          GEMINI_API_KEY=${GEMINI_API_KEY}
+          TAVILY_API_KEY=${TAVILY_API_KEY}
+          
+          # 数据源配置
+          TUSHARE_TOKEN=${TUSHARE_TOKEN}
+          
+          # 测试模式配置
+          TEST_MODE=${TEST_MODE}
+          TEST_SAMPLE_SIZE=${TEST_SAMPLE_SIZE}
+          
+          # 日志配置
+          LOG_LEVEL=INFO
+          
+          # 运行环境
+          ENVIRONMENT=production
+          GITHUB_ACTIONS=true
+          EOF
+          
+          echo "✅ 环境配置完成"
+          echo "🧪 测试模式: ${TEST_MODE}"
+          if [ "${TEST_MODE}" = "true" ]; then
+            echo "📊 测试样本数: ${TEST_SAMPLE_SIZE}"
+          fi
+      
+      # 6. 运行智能选股
+      - name: 🚀 运行智能选股
+        id: stock_selection
+        run: |
+          # 设置默认参数（手动触发时会被覆盖）
+          STOCK_POOL=${{ github.event.inputs.stock_pool || 'hs300' }}
+          TOP_N=${{ github.event.inputs.top_n || '3' }}
+          
+          echo "📊 股票池: $STOCK_POOL"
+          echo "🔢 推荐数量: $TOP_N"
+          
+          # 运行选股脚本
+          python3 test_ai_selection.py \
+            --pool $STOCK_POOL \
+            --top-n $TOP_N \
+            --output results/stock_selection_$(date +%Y%m%d).json
+          
+          echo "✅ 选股完成"
+      
+      # 7. 上传结果
+      - name: 📤 上传选股结果
+        uses: actions/upload-artifact@v4
+        with:
+          name: stock-selection-results-${{ github.run_number }}
+          path: |
+            results/stock_selection_*.json
+            logs/*.log
+          retention-days: 30  # 保留 30 天
+      
+      # 8. 发送通知（可选）
+      - name: 📧 发送结果通知
+        if: success()
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+        run: |
+          # 如果配置了飞书 Webhook，发送通知
+          if [ -n "$FEISHU_WEBHOOK" ]; then
+            python3 << EOF
+          import json
+          import requests
+          from datetime import datetime
+          
+          webhook_url = "$FEISHU_WEBHOOK"
+          
+          # 读取选股结果
+          with open("results/stock_selection_$(date +%Y%m%d).json", "r") as f:
+              results = json.load(f)
+          
+          # 构建消息
+          message = {
+              "msg_type": "text",
+              "content": {
+                  "text": f"📊 AI智能选股完成\\n时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}\\n推荐股票: {len(results)} 只\\n\\n详情请查看 GitHub Actions 结果"
+              }
+          }
+          
+          requests.post(webhook_url, json=message)
+          EOF
+          fi
+      
+      # 9. 失败通知
+      - name: ⚠️ 失败通知
+        if: failure()
+        run: |
+          echo "❌ 选股任务失败"
+          echo "📋 请查看日志了解详情"
+
+# 工作流程权限
+permissions:
+  contents: read
+  actions: write

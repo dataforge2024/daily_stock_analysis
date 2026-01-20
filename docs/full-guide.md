@@ -64,11 +64,20 @@
 
 | Secret 名称 | 说明 | 必填 |
 |------------|------|:----:|
-| `STOCK_LIST` | 自选股代码，如 `600519,300750,002594` | ✅ |
+| `STOCK_LIST` | 自选股代码，如 `600519,300750,002594` | 可选* |
+| `STOCK_POOLS` | 🆕 股票池，如 `沪深300,中证500` | 可选* |
+| `POSITION_RATIOS` | 🆕 仓位比例，如 `600519:100,300750:80` | 可选 |
 | `TAVILY_API_KEYS` | [Tavily](https://tavily.com/) 搜索 API（新闻搜索） | 推荐 |
 | `BOCHA_API_KEYS` | [博查搜索](https://open.bocha.cn/) Web Search API（中文搜索优化，支持AI摘要，多个key用逗号分隔） | 可选 |
 | `SERPAPI_API_KEYS` | [SerpAPI](https://serpapi.com/) 备用搜索 | 可选 |
 | `TUSHARE_TOKEN` | [Tushare Pro](https://tushare.pro/) Token | 可选 |
+
+> *注：`STOCK_LIST` 和 `STOCK_POOLS` 至少配置一个
+
+**🆕 新功能说明**
+- **每日推荐股票**：配置 `STOCK_POOLS`（如 `沪深300,中证500`），系统会每日筛选10～20只优质股票
+- **智能调仓建议**：配置 `STOCK_LIST` 和 `POSITION_RATIOS`，系统会根据技术面动态调整仓位
+- 详细配置说明请参考：[新功能配置指南](new-features-guide.md)
 
 #### ✅ 最小配置示例
 
@@ -165,11 +174,22 @@
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
 | `STOCK_LIST` | 自选股代码（逗号分隔） | - |
+| `STOCK_POOLS` | 🆕 股票池（逗号分隔，如 `沪深300,中证500`） | - |
+| `POSITION_RATIOS` | 🆕 仓位比例（格式：`代码:比例`，如 `600519:100,300750:80`） | - |
+| `RECOMMEND_ENABLED` | 🆕 启用推荐功能 | `false` |
+| `RECOMMEND_MIN_STOCKS` | 🆕 最少推荐股票数 | `10` |
+| `RECOMMEND_MAX_STOCKS` | 🆕 最多推荐股票数 | `20` |
+| `PORTFOLIO_ADVICE_ENABLED` | 🆕 启用调仓建议 | `false` |
 | `MAX_WORKERS` | 并发线程数 | `3` |
 | `MARKET_REVIEW_ENABLED` | 启用大盘复盘 | `true` |
 | `SCHEDULE_ENABLED` | 启用定时任务 | `false` |
 | `SCHEDULE_TIME` | 定时执行时间 | `18:00` |
 | `LOG_DIR` | 日志目录 | `./logs` |
+
+> 🆕 **新功能说明**：
+> - 配置 `STOCK_POOLS` 启用每日推荐股票（基于多因子选股）
+> - 配置 `STOCK_LIST` + `POSITION_RATIOS` 启用智能调仓建议
+> - 详细配置请参考：[新功能配置指南](new-features-guide.md)
 
 ---
 

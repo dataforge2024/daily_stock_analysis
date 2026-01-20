@@ -14,6 +14,8 @@
 
 ### 🎯 核心功能
 - **AI 决策仪表盘** - 一句话核心结论 + 精确买卖点位 + 检查清单
+- **🆕 每日推荐股票** - 基于股票池智能选股（10～20只），**规则筛选 + AI 深度分析**
+- **🆕 智能调仓建议** - 动态优化持仓结构，**AI 辅助决策**，生成加仓/减仓/卖出建议
 - **多维度分析** - 技术面 + 筹码分布 + 舆情情报 + 实时行情
 - **大盘复盘** - 每日市场概览、板块涨跌、北向资金
 - **多渠道推送** - 支持企业微信、飞书、Telegram、邮件（自动识别）
@@ -82,11 +84,20 @@
 
 | Secret 名称 | 说明 | 必填 |
 |------------|------|:----:|
-| `STOCK_LIST` | 自选股代码，如 `600519,300750,002594` | ✅ |
+| `STOCK_LIST` | 自选股代码，如 `600519,300750,002594` | 可选* |
+| `STOCK_POOLS` | 🆕 股票池，如 `沪深300,中证500`（用于推荐） | 可选* |
+| `POSITION_RATIOS` | 🆕 仓位比例，如 `600519:100,300750:80` | 可选 |
 | `TAVILY_API_KEYS` | [Tavily](https://tavily.com/) 搜索 API（新闻搜索） | 推荐 |
 | `BOCHA_API_KEYS` | [博查搜索](https://open.bocha.cn/) Web Search API（中文搜索优化，支持AI摘要，多个key用逗号分隔） | 可选 |
 | `SERPAPI_API_KEYS` | [SerpAPI](https://serpapi.com/) 备用搜索 | 可选 |
 | `TUSHARE_TOKEN` | [Tushare Pro](https://tushare.pro/) Token | 可选 |
+
+> *注：`STOCK_LIST` 和 `STOCK_POOLS` 至少配置一个
+> - 仅配置 `STOCK_POOLS`：生成每日推荐股票
+> - 仅配置 `STOCK_LIST`：个股深度分析 + 调仓建议  
+> - 同时配置：完整功能（推荐 + 分析 + 调仓）
+>
+> 🆕 **新功能详细配置**请查看 [新功能配置指南](docs/new-features-guide.md)
 
 #### 3. 启用 Actions
 

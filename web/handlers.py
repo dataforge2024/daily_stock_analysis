@@ -25,7 +25,6 @@ from typing import Dict, Any, TYPE_CHECKING
 
 from web.services import get_config_service, get_analysis_service
 from web.templates import render_config_page
-from enums import ReportType
 
 if TYPE_CHECKING:
     from http.server import BaseHTTPRequestHandler
@@ -183,13 +182,9 @@ class ApiHandler:
                 status=HTTPStatus.BAD_REQUEST
             )
         
-        # 获取报告类型参数（默认精简报告）
-        report_type_str = query.get("report_type", ["simple"])[0]
-        report_type = ReportType.from_str(report_type_str)
-        
         # 提交异步分析任务
         try:
-            result = self.analysis_service.submit_analysis(code, report_type=report_type)
+            result = self.analysis_service.submit_analysis(code)
             return JsonResponse(result)
         except Exception as e:
             logger.error(f"[ApiHandler] 提交分析任务失败: {e}")

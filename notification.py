@@ -33,6 +33,17 @@ from analyzer import AnalysisResult
 
 logger = logging.getLogger(__name__)
 
+# 延迟导入，避免循环依赖
+def _import_stock_modules():
+    """延迟导入选股和调仓模块"""
+    try:
+        from stock_selector import SelectionResult
+        from portfolio_advisor import PortfolioAdvice
+        return SelectionResult, PortfolioAdvice
+    except ImportError as e:
+        logger.debug(f"延迟导入失败: {e}")
+        return None, None
+
 
 class NotificationChannel(Enum):
     """通知渠道类型"""
@@ -2500,6 +2511,54 @@ def send_daily_report(results: List[AnalysisResult]) -> bool:
     service.save_report_to_file(report)
     
     # 推送到配置的渠道（自动识别）
+    return service.send(report)
+
+
+def send_stock_recommendation(selection_result) -> bool:
+    """
+    发送每日推荐股票
+    
+    Args:
+        selection_result: SelectionResult 选股结果
+        
+    Returns:
+        是否发送成功
+    """
+    service = get_notification_service()
+    
+    # 生成推荐报告
+    report = selection_result.format_report()
+    
+    # 保存到本地
+    filename = f"stock_recommendation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    service.save_report_to_file(report, filename=filename)
+    
+    # 推送
+    logger.info("[通知] 发送每日推荐股票...")
+    return service.send(report)
+
+
+def send_portfolio_advice(portfolio_advice) -> bool:
+    """
+    发送持仓调仓建议
+    
+    Args:
+        portfolio_advice: PortfolioAdvice 调仓建议
+        
+    Returns:
+        是否发送成功
+    """
+    service = get_notification_service()
+    
+    # 生成调仓报告
+    report = portfolio_advice.format_report()
+    
+    # 保存到本地
+    filename = f"portfolio_advice_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    service.save_report_to_file(report, filename=filename)
+    
+    # 推送
+    logger.info("[通知] 发送持仓调仓建议...")
     return service.send(report)
 
 

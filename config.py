@@ -12,7 +12,7 @@ A股自选股智能分析系统 - 配置管理模块
 
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict
 from dotenv import load_dotenv, dotenv_values
 from dataclasses import dataclass, field
 
@@ -30,6 +30,21 @@ class Config:
     
     # === 自选股配置 ===
     stock_list: List[str] = field(default_factory=list)
+    
+    # === 选股池配置 ===
+    # 可选的股票池：沪深300、中证500、创业板50、科创50、上证50、中证1000
+    # 示例：STOCK_POOLS=沪深300,中证500
+    stock_pools: List[str] = field(default_factory=list)
+    
+    # 每日推荐股票数量范围
+    recommend_min_stocks: int = 10
+    recommend_max_stocks: int = 20
+    recommend_enabled: bool = False  # 是否启用每日推荐功能
+    
+    # === 持仓配置 ===
+    # 仓位比例配置（格式：股票代码:比例，如 600519:100,300750:80）
+    position_ratios: Dict[str, float] = field(default_factory=dict)
+    portfolio_advice_enabled: bool = False  # 是否启用调仓建议功能
 
     # === 飞书云文档配置 ===
     feishu_app_id: Optional[str] = None
@@ -165,9 +180,46 @@ class Config:
             if code.strip()
         ]
         
-        # 如果没有配置，使用默认的示例股票
-        if not stock_list:
-            stock_list = ['600519', '000001', '300750']
+        # STOCK_LIST 不再必须，可以为空
+        # if not stock_list:
+        #     stock_list = ['600519', '000001', '300750']
+        
+        # === 解析股票池配置 ===
+        stock_pools_str = os.getenv('STOCK_POOLS', '')
+        stock_pools = [
+            pool.strip()
+            for pool in stock_pools_str.split(',')
+            if pool.strip()
+        ]
+        
+        # === 解析仓位比例配置 ===
+        # 格式：600519:100,300750:80,002594:50
+        position_ratios_str = os.getenv('POSITION_RATIOS', '')
+        position_ratios = {}
+        if position_ratios_str:
+            for item in position_ratios_str.split(','):
+                if ':' in item:
+                    code, ratio = item.split(':', 1)
+                    try:
+                        position_ratios[code.strip()] = float(ratio.strip())
+                    except ValueError:
+                        pass
+        
+        # 如果没有配置仓位比例，则默认为100%
+        if stock_list and not position_ratios:
+            position_ratios = {code: 100.0 for code in stock_list}
+        
+        # === 解析推荐股票配置 ===
+        recommend_enabled = os.getenv('RECOMMEND_ENABLED', 'false').lower() == 'true'
+        # 如果配置了股票池，自动启用推荐功能
+        if stock_pools and not recommend_enabled:
+            recommend_enabled = True
+        
+        # === 解析调仓建议配置 ===
+        portfolio_advice_enabled = os.getenv('PORTFOLIO_ADVICE_ENABLED', 'false').lower() == 'true'
+        # 如果配置了STOCK_LIST，自动启用调仓建议
+        if stock_list and not portfolio_advice_enabled:
+            portfolio_advice_enabled = True
         
         # 解析搜索引擎 API Keys（支持多个 key，逗号分隔）
         bocha_keys_str = os.getenv('BOCHA_API_KEYS', '')
@@ -181,6 +233,12 @@ class Config:
         
         return cls(
             stock_list=stock_list,
+            stock_pools=stock_pools,
+            recommend_enabled=recommend_enabled,
+            recommend_min_stocks=int(os.getenv('RECOMMEND_MIN_STOCKS', '10')),
+            recommend_max_stocks=int(os.getenv('RECOMMEND_MAX_STOCKS', '20')),
+            position_ratios=position_ratios,
+            portfolio_advice_enabled=portfolio_advice_enabled,
             feishu_app_id=os.getenv('FEISHU_APP_ID'),
             feishu_app_secret=os.getenv('FEISHU_APP_SECRET'),
             feishu_folder_token=os.getenv('FEISHU_FOLDER_TOKEN'),
@@ -267,8 +325,19 @@ class Config:
         """
         warnings = []
         
-        if not self.stock_list:
-            warnings.append("警告：未配置自选股列表 (STOCK_LIST)")
+        # STOCK_LIST 不再是必须配置
+        if not self.stock_list and not self.stock_pools:
+            warnings.append("提示：未配置自选股列表 (STOCK_LIST) 和股票池 (STOCK_POOLS)")
+            warnings.append("      至少需要配置其中一个才能使用分析功能")
+        
+        if self.stock_list and not self.stock_pools:
+            warnings.append("提示：已配置自选股列表，将进行深度分析和调仓建议")
+        
+        if self.stock_pools and not self.stock_list:
+            warnings.append("提示：已配置股票池，将生成每日推荐股票")
+        
+        if self.stock_list and self.stock_pools:
+            warnings.append("提示：同时配置了自选股和股票池，将执行完整功能（推荐+分析+调仓）")
         
         if not self.tushare_token:
             warnings.append("提示：未配置 Tushare Token，将使用其他数据源")

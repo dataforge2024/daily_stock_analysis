@@ -260,12 +260,12 @@ class DataFetcherManager:
         """
         初始化默认数据源列表
         
-        按优先级排序：
-        0. EfinanceFetcher (Priority 0) - 最高优先级
-        1. AkshareFetcher (Priority 1)
-        2. TushareFetcher (Priority 2)
-        3. BaostockFetcher (Priority 3)
-        4. YfinanceFetcher (Priority 4)
+        按优先级排序（基于稳定性测试结果调整）：
+        0. BaostockFetcher (Priority 0) - 最稳定，优先使用
+        1. EfinanceFetcher (Priority 1) - 数据丰富，但可能被限流
+        2. AkshareFetcher (Priority 2) - 备用数据源
+        3. TushareFetcher (Priority 3) - 需要 Token
+        4. YfinanceFetcher (Priority 4) - 国际市场
         """
         from .efinance_fetcher import EfinanceFetcher
         from .akshare_fetcher import AkshareFetcher
@@ -274,10 +274,10 @@ class DataFetcherManager:
         from .yfinance_fetcher import YfinanceFetcher
         
         self._fetchers = [
-            EfinanceFetcher(),   # 最高优先级
+            BaostockFetcher(),   # ⭐ 最稳定，优先使用
+            EfinanceFetcher(),
             AkshareFetcher(),
             TushareFetcher(),
-            BaostockFetcher(),
             YfinanceFetcher(),
         ]
         

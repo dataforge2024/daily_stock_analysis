@@ -252,15 +252,20 @@ class AkshareFetcher(BaseFetcher):
     """
     
     name = "AkshareFetcher"
-    priority = 1
+    priority = 2  # 备用数据源
     
-    def __init__(self, sleep_min: float = 2.0, sleep_max: float = 5.0):
+    def __init__(self, sleep_min: float = 3.0, sleep_max: float = 6.0):
         """
         初始化 AkshareFetcher
         
         Args:
-            sleep_min: 最小休眠时间（秒）
-            sleep_max: 最大休眠时间（秒）
+            sleep_min: 最小休眠时间（秒），默认 3.0 秒
+            sleep_max: 最大休眠时间（秒），默认 6.0 秒
+        
+        增强版说明：
+        - 相比原 2.0-5.0 秒，增加到 3.0-6.0 秒
+        - Akshare 更容易被限流，需要更长的延迟
+        - 牺牲一点速度，换取更高的稳定性
         """
         self.sleep_min = sleep_min
         self.sleep_max = sleep_max
