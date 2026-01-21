@@ -240,7 +240,7 @@ class StockAnalysisPipeline:
             AnalysisResult 或 None（如果分析失败）
         """
         try:
-            # 获取股票名称（使用akshare API，带缓存）
+            # 获取股票名称（多级降级策略）
             stock_name = ''
             
             # Step 1: 获取实时行情（量比、换手率等）

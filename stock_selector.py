@@ -214,14 +214,15 @@ class StockSelector:
         self.fetch_only = fetch_only
         self.analyze_only = analyze_only
         
-        # fetch_only 模式下禁用 AI 分析
+        # 使用实例变量控制AI分析，fetch_only模式下禁用
+        self.use_ai_analysis = self.USE_AI_ANALYSIS and not self.fetch_only
+        
         if self.fetch_only:
             logger.info("[选股] fetch_only 模式，禁用 AI 分析")
-            self.USE_AI_ANALYSIS = False
             self.ai_analyzer = None
         
         # 如果未提供且启用 AI 分析，尝试创建
-        if self.USE_AI_ANALYSIS and not self.ai_analyzer and not self.fetch_only:
+        if self.use_ai_analysis and not self.ai_analyzer and not self.fetch_only:
             try:
                 self.ai_analyzer = GeminiAnalyzer()
                 if not self.ai_analyzer.is_available():
@@ -861,7 +862,7 @@ class StockSelector:
         logger.info(f"[选股-阶段1] 规则筛选Top {len(candidates)} 只候选股")
         
         # === 第二阶段：AI 深度分析 ===
-        if self.ai_analyzer and self.USE_AI_ANALYSIS and len(candidates) > 0:
+        if self.ai_analyzer and self.use_ai_analysis and len(candidates) > 0:
             logger.info(f"[选股-阶段2] 启动 AI 深度分析，分析 {len(candidates)} 只候选股...")
             final_stocks = self._ai_deep_analysis(candidates)
             logger.info(f"[选股-阶段2] AI 分析完成，最终推荐 {len(final_stocks)} 只")
