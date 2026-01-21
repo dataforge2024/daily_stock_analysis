@@ -34,6 +34,7 @@ import argparse
 import logging
 import sys
 import time
+import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timezone, timedelta
 from logging.handlers import RotatingFileHandler
@@ -239,8 +240,8 @@ class StockAnalysisPipeline:
             AnalysisResult 或 None（如果分析失败）
         """
         try:
-            # 获取股票名称（优先从实时行情获取真实名称）
-            stock_name = STOCK_NAME_MAP.get(code, '')
+            # 获取股票名称（多级降级策略）
+            stock_name = ''
             
             # Step 1: 获取实时行情（量比、换手率等）
             realtime_quote: Optional[RealtimeQuote] = None
@@ -254,6 +255,34 @@ class StockAnalysisPipeline:
                               f"量比={realtime_quote.volume_ratio}, 换手率={realtime_quote.turnover_rate}%")
             except Exception as e:
                 logger.warning(f"[{code}] 获取实时行情失败: {e}")
+            
+            # 如果还是没有名称，使用专门的股票名称API获取
+            if not stock_name:
+                try:
+                    stock_name = self.akshare_fetcher.get_stock_name(code)
+                    logger.info(f"[{code}] 使用股票名称API获取: {stock_name}")
+                except Exception as e:
+                    logger.debug(f"[{code}] 从股票名称API获取失败: {e}")
+            
+            # 如果还是没有名称，尝试从STOCK_NAME_MAP获取（作为兜底）
+            if not stock_name or stock_name == code:
+                stock_name = STOCK_NAME_MAP.get(code, '')
+            
+            # 如果还是没有名称，尝试从历史数据获取
+            if not stock_name:
+                try:
+                    context_temp = self.db.get_analysis_context(code)
+                    if context_temp and 'raw_data' in context_temp:
+                        raw_data = context_temp['raw_data']
+                        if isinstance(raw_data, list) and len(raw_data) > 0:
+                            df_temp = pd.DataFrame(raw_data)
+                            if 'name' in df_temp.columns:
+                                name_from_df = df_temp.iloc[-1]['name']
+                                if name_from_df and str(name_from_df) != 'nan':
+                                    stock_name = str(name_from_df)
+                                    logger.info(f"[{code}] 从历史数据获取股票名称: {stock_name}")
+                except Exception as e:
+                    logger.debug(f"[{code}] 从历史数据获取股票名称失败: {e}")
             
             # 如果还是没有名称，使用代码作为名称
             if not stock_name:
@@ -275,7 +304,6 @@ class StockAnalysisPipeline:
                 # 获取历史数据进行趋势分析
                 context = self.db.get_analysis_context(code)
                 if context and 'raw_data' in context:
-                    import pandas as pd
                     raw_data = context['raw_data']
                     if isinstance(raw_data, list) and len(raw_data) > 0:
                         df = pd.DataFrame(raw_data)
@@ -738,6 +766,25 @@ def parse_arguments() -> argparse.Namespace:
         help='仅启动 WebUI 服务，不自动执行分析（通过 /analysis API 手动触发）'
     )
     
+    parser.add_argument(
+        '--fetch-only',
+        action='store_true',
+        help='仅获取股票数据并保存，不进行分析（用于拆分长时间运行的workflow）'
+    )
+    
+    parser.add_argument(
+        '--analyze-only',
+        action='store_true',
+        help='仅分析预先获取的股票数据（用于拆分长时间运行的workflow）'
+    )
+    
+    parser.add_argument(
+        '--data-dir',
+        type=str,
+        default='./data',
+        help='数据目录路径（默认: ./data）'
+    )
+    
     return parser.parse_args()
 
 
@@ -829,7 +876,9 @@ def run_full_analysis(
                 selection_result = select_stocks(
                     pools=config.stock_pools,
                     test_mode=test_mode,
-                    test_sample_size=test_sample_size
+                    test_sample_size=test_sample_size,
+                    fetch_only=config.fetch_only,
+                    analyze_only=config.analyze_only
                 )
                 
                 if selection_result and selection_result.selected_stocks:
@@ -1029,6 +1078,16 @@ def main() -> int:
     
     # 加载配置（在设置日志前加载，以获取日志目录）
     config = get_config()
+    
+    # 命令行参数覆盖配置
+    if args.fetch_only:
+        config.fetch_only = True
+        config.analyze_only = False
+        logger.info("模式: 仅获取数据（fetch-only）")
+    elif args.analyze_only:
+        config.fetch_only = False
+        config.analyze_only = True
+        logger.info("模式: 仅分析数据（analyze-only）")
     
     # 配置日志（输出到控制台和文件）
     setup_logging(debug=args.debug, log_dir=config.log_dir)

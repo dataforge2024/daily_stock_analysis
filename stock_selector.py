@@ -191,7 +191,9 @@ class StockSelector:
                  ai_analyzer: Optional[GeminiAnalyzer] = None,
                  search_service: Optional[SearchService] = None,
                  test_mode: bool = False,
-                 test_sample_size: int = 30):
+                 test_sample_size: int = 30,
+                 fetch_only: bool = False,
+                 analyze_only: bool = False):
         """
         初始化选股服务
         
@@ -201,15 +203,26 @@ class StockSelector:
             search_service: 搜索服务实例（用于获取新闻上下文）
             test_mode: 测试模式（随机选择少量股票）
             test_sample_size: 测试模式下的样本数量
+            fetch_only: 仅获取数据，不进行AI分析
+            analyze_only: 仅分析已获取的数据
         """
         self.data_manager = data_manager or DataFetcherManager()
         self.ai_analyzer = ai_analyzer
         self.search_service = search_service
         self.test_mode = test_mode
         self.test_sample_size = test_sample_size
+        self.fetch_only = fetch_only
+        self.analyze_only = analyze_only
+        
+        # 使用实例变量控制AI分析，fetch_only模式下禁用
+        self.use_ai_analysis = self.USE_AI_ANALYSIS and not self.fetch_only
+        
+        if self.fetch_only:
+            logger.info("[选股] fetch_only 模式，禁用 AI 分析")
+            self.ai_analyzer = None
         
         # 如果未提供且启用 AI 分析，尝试创建
-        if self.USE_AI_ANALYSIS and not self.ai_analyzer:
+        if self.use_ai_analysis and not self.ai_analyzer and not self.fetch_only:
             try:
                 self.ai_analyzer = GeminiAnalyzer()
                 if not self.ai_analyzer.is_available():
@@ -849,7 +862,7 @@ class StockSelector:
         logger.info(f"[选股-阶段1] 规则筛选Top {len(candidates)} 只候选股")
         
         # === 第二阶段：AI 深度分析 ===
-        if self.ai_analyzer and self.USE_AI_ANALYSIS and len(candidates) > 0:
+        if self.ai_analyzer and self.use_ai_analysis and len(candidates) > 0:
             logger.info(f"[选股-阶段2] 启动 AI 深度分析，分析 {len(candidates)} 只候选股...")
             final_stocks = self._ai_deep_analysis(candidates)
             logger.info(f"[选股-阶段2] AI 分析完成，最终推荐 {len(final_stocks)} 只")
@@ -961,7 +974,8 @@ class StockSelector:
 
 # === 便捷函数 ===
 
-def select_stocks(pools: List[str], test_mode: bool = False, test_sample_size: int = 30) -> SelectionResult:
+def select_stocks(pools: List[str], test_mode: bool = False, test_sample_size: int = 30, 
+                 fetch_only: bool = False, analyze_only: bool = False) -> SelectionResult:
     """
     便捷函数：从配置的股票池选股
     
@@ -969,6 +983,8 @@ def select_stocks(pools: List[str], test_mode: bool = False, test_sample_size: i
         pools: 股票池名称列表，如 ['沪深300', '中证500']
         test_mode: 测试模式（随机选择少量股票）
         test_sample_size: 测试模式下的样本数量
+        fetch_only: 仅获取数据，不进行AI分析
+        analyze_only: 仅分析已获取的数据
         
     Returns:
         SelectionResult 选股结果
@@ -976,30 +992,33 @@ def select_stocks(pools: List[str], test_mode: bool = False, test_sample_size: i
     if test_mode:
         logger.warning(f"[选股-测试模式] 启用测试模式，每个池随机抽取 {test_sample_size} 只股票")
     
-    # 创建 AI 分析器和搜索服务（如果可用）
+    # 创建 AI 分析器和搜索服务（如果可用且不是 fetch_only 模式）
     ai_analyzer = None
     search_service = None
     
-    try:
-        ai_analyzer = GeminiAnalyzer()
-        if not ai_analyzer.is_available():
-            logger.warning("[选股] AI 分析器不可用，将仅使用规则筛选")
-            ai_analyzer = None
-    except Exception as e:
-        logger.warning(f"[选股] AI 分析器创建失败: {e}")
-    
-    try:
-        from search_service import SearchService
-        search_service = SearchService()
-    except Exception as e:
-        logger.warning(f"[选股] 搜索服务创建失败: {e}")
+    if not fetch_only:
+        try:
+            ai_analyzer = GeminiAnalyzer()
+            if not ai_analyzer.is_available():
+                logger.warning("[选股] AI 分析器不可用，将仅使用规则筛选")
+                ai_analyzer = None
+        except Exception as e:
+            logger.warning(f"[选股] AI 分析器创建失败: {e}")
+        
+        try:
+            from search_service import SearchService
+            search_service = SearchService()
+        except Exception as e:
+            logger.warning(f"[选股] 搜索服务创建失败: {e}")
     
     # 创建选股器
     selector = StockSelector(
         ai_analyzer=ai_analyzer,
         search_service=search_service,
         test_mode=test_mode,
-        test_sample_size=test_sample_size
+        test_sample_size=test_sample_size,
+        fetch_only=fetch_only,
+        analyze_only=analyze_only
     )
     
     # 解析股票池
