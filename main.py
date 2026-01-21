@@ -255,6 +255,23 @@ class StockAnalysisPipeline:
             except Exception as e:
                 logger.warning(f"[{code}] 获取实时行情失败: {e}")
             
+            # 如果还是没有名称，尝试从历史数据获取
+            if not stock_name:
+                try:
+                    context_temp = self.db.get_analysis_context(code)
+                    if context_temp and 'raw_data' in context_temp:
+                        import pandas as pd
+                        raw_data = context_temp['raw_data']
+                        if isinstance(raw_data, list) and len(raw_data) > 0:
+                            df_temp = pd.DataFrame(raw_data)
+                            if 'name' in df_temp.columns:
+                                name_from_df = df_temp.iloc[-1]['name']
+                                if name_from_df and str(name_from_df) != 'nan':
+                                    stock_name = str(name_from_df)
+                                    logger.info(f"[{code}] 从历史数据获取股票名称: {stock_name}")
+                except Exception as e:
+                    logger.debug(f"[{code}] 从历史数据获取股票名称失败: {e}")
+            
             # 如果还是没有名称，使用代码作为名称
             if not stock_name:
                 stock_name = f'股票{code}'
