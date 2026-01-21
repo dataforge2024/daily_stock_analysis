@@ -48,7 +48,7 @@ jobs:
   fetch-data:
     name: 获取股票数据
     runs-on: ubuntu-latest
-    timeout-minutes: 30  # 数据获取阶段设置30分钟超时
+    timeout-minutes: 90  # 数据获取阶段设置90分钟超时
     
     steps:
       # 1. 检出代码
