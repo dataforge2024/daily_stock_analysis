@@ -34,6 +34,7 @@ import argparse
 import logging
 import sys
 import time
+import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timezone, timedelta
 from logging.handlers import RotatingFileHandler
@@ -260,7 +261,6 @@ class StockAnalysisPipeline:
                 try:
                     context_temp = self.db.get_analysis_context(code)
                     if context_temp and 'raw_data' in context_temp:
-                        import pandas as pd
                         raw_data = context_temp['raw_data']
                         if isinstance(raw_data, list) and len(raw_data) > 0:
                             df_temp = pd.DataFrame(raw_data)
@@ -292,7 +292,6 @@ class StockAnalysisPipeline:
                 # 获取历史数据进行趋势分析
                 context = self.db.get_analysis_context(code)
                 if context and 'raw_data' in context:
-                    import pandas as pd
                     raw_data = context['raw_data']
                     if isinstance(raw_data, list) and len(raw_data) > 0:
                         df = pd.DataFrame(raw_data)
