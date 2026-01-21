@@ -751,7 +751,7 @@ class StockSelector:
     
     def _generate_reason(self, score: StockScore, df: pd.DataFrame) -> str:
         """
-        生成推荐理由
+        生成推荐理由（增强版，更详细）
         
         Args:
             score: 评分对象
@@ -762,32 +762,57 @@ class StockSelector:
         """
         reasons = []
         
-        # 趋势
+        # 趋势分析（详细描述）
         if score.trend_score >= 0.7:
-            reasons.append("多头排列强势")
+            latest = df.iloc[-1]
+            ma5 = float(latest.get('ma5', 0))
+            ma10 = float(latest.get('ma10', 0))
+            ma20 = float(latest.get('ma20', 0))
+            if ma5 > ma10 > ma20:
+                reasons.append(f"多头排列强势(MA5>{ma5:.2f} MA10>{ma10:.2f} MA20>{ma20:.2f})")
+            else:
+                reasons.append("趋势向上")
         elif score.trend_score >= 0.5:
-            reasons.append("趋势向上")
+            reasons.append("趋势转好")
         
-        # 量能
+        # 量能分析（详细描述）
         if score.volume_score >= 0.5:
-            reasons.append("量价配合良好")
+            if score.volume_ratio > 1.5:
+                reasons.append(f"放量上涨(量比{score.volume_ratio:.2f})")
+            else:
+                reasons.append("量价配合良好")
         elif score.volume_score >= 0.3:
-            reasons.append("缩量回调")
+            if score.volume_ratio < 0.8:
+                reasons.append(f"缩量回调(量比{score.volume_ratio:.2f}，洗盘信号)")
         
-        # 乖离率
+        # 乖离率分析（详细描述）
         if score.bias_score >= 0.5:
-            reasons.append("乖离率健康")
+            latest = df.iloc[-1]
+            close = float(latest['close'])
+            ma5 = float(latest.get('ma5', 0))
+            if ma5 > 0:
+                bias = (close - ma5) / ma5 * 100
+                if -2 <= bias <= 2:
+                    reasons.append(f"回踩MA5支撑(乖离率{bias:.1f}%，最佳买点)")
+                elif bias <= 5:
+                    reasons.append(f"乖离率健康({bias:.1f}%，不追高)")
         elif score.bias_score >= 0.3:
             reasons.append("超卖反弹机会")
         
-        # 表现
+        # 近期表现（详细描述）
         if score.performance_score >= 0.5:
-            reasons.append("近期表现优异")
+            try:
+                if len(df) >= 5:
+                    pct_5d = ((df['close'].iloc[-1] / df['close'].iloc[-5]) - 1) * 100
+                    reasons.append(f"近5日涨{pct_5d:.1f}%")
+            except:
+                reasons.append("近期表现优异")
         
+        # 如果没有理由，提供综合评分
         if not reasons:
-            reasons.append("综合评分良好")
+            reasons.append(f"综合评分{score.total_score:.1f}/10")
         
-        return "、".join(reasons)
+        return "；".join(reasons)
     
     def _filter_and_rank(self, scored_stocks: List[StockScore]) -> List[StockScore]:
         """

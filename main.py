@@ -183,6 +183,9 @@ class StockAnalysisPipeline:
         2. 如果有且不强制刷新，则跳过网络请求
         3. 否则从数据源获取并保存
         
+        注意：如果在交易日盘中运行，建议设置 force_refresh=True
+        以获取最新的实时数据。断点续传逻辑主要用于节省API调用。
+        
         Args:
             code: 股票代码
             force_refresh: 是否强制刷新（忽略本地缓存）
@@ -194,12 +197,13 @@ class StockAnalysisPipeline:
             today = date.today()
             
             # 断点续传检查：如果今日数据已存在，跳过
+            # 注意：对于实时行情分析，应配合 get_realtime_quote() 使用
             if not force_refresh and self.db.has_today_data(code, today):
-                logger.info(f"[{code}] 今日数据已存在，跳过获取（断点续传）")
+                logger.info(f"[{code}] 今日数据已存在，跳过获取（断点续传）。如需实时数据请查看实时行情。")
                 return True, None
             
-            # 从数据源获取数据
-            logger.info(f"[{code}] 开始从数据源获取数据...")
+            # 从数据源获取数据（会包含当天数据如果可用）
+            logger.info(f"[{code}] 开始从数据源获取数据（包括当天实时数据）...")
             df, source_name = self.fetcher_manager.get_daily_data(code, days=30)
             
             if df is None or df.empty:

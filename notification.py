@@ -455,7 +455,7 @@ class NotificationService:
         """
         生成决策仪表盘格式的日报（详细版）
         
-        格式：市场概览 + 重要信息 + 核心结论 + 数据透视 + 作战计划
+        格式：核心结论 + 重要信息 + 数据透视 + 作战计划
         
         Args:
             results: 分析结果列表
@@ -497,7 +497,34 @@ class NotificationService:
                 "",
             ])
             
-            # ========== 舆情与基本面概览（放在最前面）==========
+            # ========== 核心结论（调整到第一位）==========
+            core = dashboard.get('core_conclusion', {}) if dashboard else {}
+            one_sentence = core.get('one_sentence', result.analysis_summary)
+            time_sense = core.get('time_sensitivity', '本周内')
+            pos_advice = core.get('position_advice', {})
+            
+            report_lines.extend([
+                "### 📌 核心结论",
+                "",
+                f"**{signal_emoji} {signal_text}** | {result.trend_prediction}",
+                "",
+                f"> **一句话决策**: {one_sentence}",
+                "",
+                f"⏰ **时效性**: {time_sense}",
+                "",
+            ])
+            
+            # 持仓分类建议
+            if pos_advice:
+                report_lines.extend([
+                    "| 持仓情况 | 操作建议 |",
+                    "|---------|---------|",
+                    f"| 🆕 **空仓者** | {pos_advice.get('no_position', result.operation_advice)} |",
+                    f"| 💼 **持仓者** | {pos_advice.get('has_position', '继续持有')} |",
+                    "",
+                ])
+            
+            # ========== 重要信息速览（调整到第二位）==========
             intel = dashboard.get('intelligence', {}) if dashboard else {}
             if intel:
                 report_lines.extend([
@@ -535,33 +562,6 @@ class NotificationService:
                     report_lines.append(f"**📢 最新动态**: {intel['latest_news']}")
                 
                 report_lines.append("")
-            
-            # ========== 核心结论 ==========
-            core = dashboard.get('core_conclusion', {}) if dashboard else {}
-            one_sentence = core.get('one_sentence', result.analysis_summary)
-            time_sense = core.get('time_sensitivity', '本周内')
-            pos_advice = core.get('position_advice', {})
-            
-            report_lines.extend([
-                "### 📌 核心结论",
-                "",
-                f"**{signal_emoji} {signal_text}** | {result.trend_prediction}",
-                "",
-                f"> **一句话决策**: {one_sentence}",
-                "",
-                f"⏰ **时效性**: {time_sense}",
-                "",
-            ])
-            
-            # 持仓分类建议
-            if pos_advice:
-                report_lines.extend([
-                    "| 持仓情况 | 操作建议 |",
-                    "|---------|---------|",
-                    f"| 🆕 **空仓者** | {pos_advice.get('no_position', result.operation_advice)} |",
-                    f"| 💼 **持仓者** | {pos_advice.get('has_position', '继续持有')} |",
-                    "",
-                ])
             
             # ========== 数据透视 ==========
             data_persp = dashboard.get('data_perspective', {}) if dashboard else {}
