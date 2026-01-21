@@ -1,6 +1,6 @@
 # GitHub Actions 智能选股工作流配置
 
-name: AI Smart Stock Selection
+name: 每日股票推荐
 
 # 触发条件
 on:
