@@ -195,6 +195,13 @@ _etf_realtime_cache: Dict[str, Any] = {
     'ttl': 60  # 60秒缓存有效期
 }
 
+# 股票名称缓存（避免重复请求）
+_stock_name_cache: Dict[str, Any] = {
+    'data': None,  # DataFrame with 'code' and 'name' columns
+    'timestamp': 0,
+    'ttl': 86400  # 24小时缓存有效期（股票名称不经常变化）
+}
+
 
 def _is_etf_code(stock_code: str) -> bool:
     """
@@ -936,6 +943,78 @@ class AkshareFetcher(BaseFetcher):
                     return None
         
         return None
+    
+    def get_stock_name(self, stock_code: str) -> str:
+        """
+        获取股票名称（带缓存）
+        
+        使用akshare的stock_info_a_code_name() API获取所有A股代码和名称
+        结果会缓存24小时，避免频繁请求
+        
+        Args:
+            stock_code: 股票代码
+            
+        Returns:
+            股票名称，如果获取失败返回股票代码
+        """
+        import akshare as ak
+        
+        try:
+            # 检查缓存
+            current_time = time.time()
+            if (_stock_name_cache['data'] is not None and 
+                current_time - _stock_name_cache['timestamp'] < _stock_name_cache['ttl']):
+                df = _stock_name_cache['data']
+                logger.debug(f"[缓存命中] 使用缓存的股票名称数据")
+            else:
+                # 获取所有A股代码和名称
+                try:
+                    logger.info(f"[API调用] ak.stock_info_a_code_name() 获取股票名称列表...")
+                    import time as _time
+                    api_start = _time.time()
+                    
+                    df = ak.stock_info_a_code_name()
+                    
+                    api_elapsed = _time.time() - api_start
+                    if df is not None and not df.empty:
+                        logger.info(f"[API返回] ak.stock_info_a_code_name 成功: 返回 {len(df)} 只股票, 耗时 {api_elapsed:.2f}s")
+                        # 更新缓存
+                        _stock_name_cache['data'] = df
+                        _stock_name_cache['timestamp'] = current_time
+                    else:
+                        logger.warning(f"[API返回] ak.stock_info_a_code_name 返回空数据")
+                        return stock_code
+                except Exception as e:
+                    logger.warning(f"[API错误] 获取股票名称列表失败: {e}")
+                    # 降级到实时行情获取名称
+                    try:
+                        realtime_quote = self.get_realtime_quote(stock_code)
+                        if realtime_quote and realtime_quote.name:
+                            return realtime_quote.name
+                    except:
+                        pass
+                    return stock_code
+            
+            # 从缓存的DataFrame中查找股票名称
+            if df is not None and not df.empty:
+                # akshare返回的列名可能是'code'和'name'或'代码'和'名称'
+                code_col = 'code' if 'code' in df.columns else '代码'
+                name_col = 'name' if 'name' in df.columns else '名称'
+                
+                if code_col in df.columns and name_col in df.columns:
+                    match = df[df[code_col] == stock_code]
+                    if not match.empty:
+                        stock_name = str(match.iloc[0][name_col])
+                        logger.debug(f"[股票名称] {stock_code} -> {stock_name}")
+                        return stock_name
+            
+            # 如果没找到，返回代码
+            logger.debug(f"[股票名称] 未找到 {stock_code} 的名称，返回代码")
+            return stock_code
+            
+        except Exception as e:
+            logger.error(f"[股票名称] 获取 {stock_code} 名称失败: {e}")
+            return stock_code
     
     def get_enhanced_data(self, stock_code: str, days: int = 60) -> Dict[str, Any]:
         """

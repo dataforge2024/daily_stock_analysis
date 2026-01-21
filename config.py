@@ -41,6 +41,10 @@ class Config:
     recommend_max_stocks: int = 20
     recommend_enabled: bool = False  # 是否启用每日推荐功能
     
+    # === 工作流拆分配置 ===
+    fetch_only: bool = False  # 仅获取数据，不进行AI分析（用于拆分长时间运行的workflow）
+    analyze_only: bool = False  # 仅分析已获取的数据（用于拆分长时间运行的workflow）
+    
     # === 持仓配置 ===
     # 仓位比例配置（格式：股票代码:比例，如 600519:100,300750:80）
     position_ratios: Dict[str, float] = field(default_factory=dict)
@@ -237,6 +241,8 @@ class Config:
             recommend_enabled=recommend_enabled,
             recommend_min_stocks=int(os.getenv('RECOMMEND_MIN_STOCKS', '10')),
             recommend_max_stocks=int(os.getenv('RECOMMEND_MAX_STOCKS', '20')),
+            fetch_only=os.getenv('FETCH_ONLY', 'false').lower() == 'true',
+            analyze_only=os.getenv('ANALYZE_ONLY', 'false').lower() == 'true',
             position_ratios=position_ratios,
             portfolio_advice_enabled=portfolio_advice_enabled,
             feishu_app_id=os.getenv('FEISHU_APP_ID'),

@@ -44,12 +44,11 @@ env:
 
 # 作业定义
 jobs:
-  stock-selection:
-    name: 智能选股分析
+  # Job 1: 数据获取阶段
+  fetch-data:
+    name: 获取股票数据
     runs-on: ubuntu-latest
-    
-    # 超时设置（防止卡死）
-    timeout-minutes: 60
+    timeout-minutes: 30  # 数据获取阶段设置30分钟超时
     
     steps:
       # 1. 检出代码
@@ -61,9 +60,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'  # 缓存依赖
+          cache: 'pip'
       
-      # 3. 安装系统依赖（如果需要）
+      # 3. 安装系统依赖
       - name: 📦 安装系统依赖
         run: |
           sudo apt-get update
@@ -75,20 +74,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       
-      # 5. 配置环境变量
+      # 5. 配置环境变量（数据获取阶段）
       - name: ⚙️ 配置环境
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || secrets.GEMINI_MODEL || 'gemini-3-flash-preview' }}
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
-          TAVILY_API_KEYS: ${{ secrets.TAVILY_API_KEYS }}
-          BOCHA_API_KEYS: ${{ secrets.BOCHA_API_KEYS }}
-          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
-          WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
           STOCK_POOL_INPUT: ${{ github.event.inputs.stock_pool || 'zz500' }}
-          TOP_N_INPUT: ${{ github.event.inputs.top_n || '10' }}
         run: |
-          # 映射股票池代号到中文名称
           case "${STOCK_POOL_INPUT}" in
             hs300)
               STOCK_POOLS="沪深300"
@@ -104,7 +95,121 @@ jobs:
               ;;
           esac
           
-          # 创建 .env 文件
+          cat > .env << EOF
+          # 数据源配置
+          TUSHARE_TOKEN=${TUSHARE_TOKEN}
+          
+          # 股票池配置
+          STOCK_POOLS=${STOCK_POOLS}
+          RECOMMEND_ENABLED=true
+          RECOMMEND_TOP_N=100
+          
+          # 关闭自选股分析
+          STOCK_LIST=
+          
+          # 仅获取数据，不进行AI分析
+          FETCH_ONLY=true
+          
+          # 日志配置
+          LOG_LEVEL=INFO
+          
+          # 运行环境
+          ENVIRONMENT=production
+          GITHUB_ACTIONS=true
+          EOF
+          
+          echo "✅ 环境配置完成（数据获取模式）"
+          echo "📊 股票池: ${STOCK_POOLS}"
+      
+      # 6. 运行数据获取
+      - name: 📊 获取股票数据
+        run: |
+          mkdir -p data logs reports
+          echo "========================================="
+          echo "开始获取股票数据"
+          echo "时间: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')"
+          echo "========================================="
+          
+          python3 main.py --fetch-only
+          
+          echo "========================================="
+          echo "✅ 数据获取完成"
+          echo "========================================="
+      
+      # 7. 上传数据到 artifacts
+      - name: 📤 上传数据
+        uses: actions/upload-artifact@v4
+        with:
+          name: stock-data
+          path: |
+            data/
+          retention-days: 1
+  
+  # Job 2: AI分析阶段
+  analyze-stocks:
+    name: AI智能分析
+    runs-on: ubuntu-latest
+    needs: fetch-data  # 依赖数据获取阶段
+    timeout-minutes: 50  # AI分析阶段设置50分钟超时
+    
+    steps:
+      # 1. 检出代码
+      - name: 📥 检出代码
+        uses: actions/checkout@v4
+      
+      # 2. 设置 Python 环境
+      - name: 🐍 设置 Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      # 3. 安装系统依赖
+      - name: 📦 安装系统依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhdf5-dev
+      
+      # 4. 安装 Python 依赖
+      - name: 📦 安装 Python 依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      # 5. 下载数据 artifacts
+      - name: 📥 下载股票数据
+        uses: actions/download-artifact@v4
+        with:
+          name: stock-data
+          path: data/
+      
+      # 6. 配置环境变量（AI分析阶段）
+      - name: ⚙️ 配置环境
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || secrets.GEMINI_MODEL || 'gemini-3-flash-preview' }}
+          TAVILY_API_KEYS: ${{ secrets.TAVILY_API_KEYS }}
+          BOCHA_API_KEYS: ${{ secrets.BOCHA_API_KEYS }}
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
+          STOCK_POOL_INPUT: ${{ github.event.inputs.stock_pool || 'zz500' }}
+          TOP_N_INPUT: ${{ github.event.inputs.top_n || '10' }}
+        run: |
+          case "${STOCK_POOL_INPUT}" in
+            hs300)
+              STOCK_POOLS="沪深300"
+              ;;
+            zz500)
+              STOCK_POOLS="中证500"
+              ;;
+            all)
+              STOCK_POOLS="沪深300,中证500"
+              ;;
+            *)
+              STOCK_POOLS="沪深300"
+              ;;
+          esac
+          
           cat > .env << EOF
           # AI API Keys
           GEMINI_API_KEY=${GEMINI_API_KEY}
@@ -112,16 +217,16 @@ jobs:
           TAVILY_API_KEYS=${TAVILY_API_KEYS}
           BOCHA_API_KEYS=${BOCHA_API_KEYS}
           
-          # 数据源配置
-          TUSHARE_TOKEN=${TUSHARE_TOKEN}
-          
-          # 股票池配置（智能选股）
+          # 股票池配置
           STOCK_POOLS=${STOCK_POOLS}
           RECOMMEND_ENABLED=true
           RECOMMEND_TOP_N=${TOP_N_INPUT}
           
-          # 关闭自选股分析（只做选股推荐）
+          # 关闭自选股分析
           STOCK_LIST=
+          
+          # 仅分析已获取的数据
+          ANALYZE_ONLY=true
           
           # 通知配置
           FEISHU_WEBHOOK_URL=${FEISHU_WEBHOOK_URL}
@@ -135,27 +240,23 @@ jobs:
           GITHUB_ACTIONS=true
           EOF
           
-          echo "✅ 环境配置完成"
+          echo "✅ 环境配置完成（AI分析模式）"
           echo "📊 股票池: ${STOCK_POOLS}"
           echo "🔢 推荐数量: ${TOP_N_INPUT}"
       
-      # 6. 运行智能选股
-      - name: 🚀 运行智能选股
-        id: stock_selection
+      # 7. 运行 AI 分析
+      - name: 🤖 运行 AI 分析
         run: |
-          # 创建必要的目录
-          mkdir -p data logs reports
-          
+          mkdir -p logs reports
           echo "========================================="
-          echo "开始运行AI智能选股"
+          echo "开始运行AI智能分析"
           echo "时间: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')"
           echo "========================================="
           
-          # 运行 main.py（会根据 .env 中的 STOCK_POOLS 执行选股）
-          python3 main.py
+          python3 main.py --analyze-only
           
           echo "========================================="
-          echo "✅ 选股完成"
+          echo "✅ AI分析完成"
           echo "=========================================" 
       
       # 7. 上传结果
