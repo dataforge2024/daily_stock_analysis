@@ -837,6 +837,16 @@ def run_full_analysis(
                     
                     # 打印推荐列表
                     logger.info("\n" + selection_result.format_report())
+                    
+                    # 保存到 Notion
+                    try:
+                        from notion_service import get_notion_service
+                        notion = get_notion_service()
+                        if notion.is_available():
+                            if notion.save_stock_selection(selection_result):
+                                logger.info(f"✅ 推荐股票已保存到 Notion ({len(selection_result.selected_stocks)} 只)")
+                    except Exception as e:
+                        logger.debug(f"Notion 保存失败: {e}")
                 else:
                     logger.warning("选股未找到符合条件的股票")
                     
@@ -894,6 +904,16 @@ def run_full_analysis(
                     
                     # 打印调仓建议
                     logger.info("\n" + portfolio_advice.format_report())
+                    
+                    # 保存到 Notion
+                    try:
+                        from notion_service import get_notion_service
+                        notion = get_notion_service()
+                        if notion.is_available():
+                            if notion.save_portfolio_advice(portfolio_advice):
+                                logger.info("✅ 调仓建议已保存到 Notion")
+                    except Exception as e:
+                        logger.debug(f"Notion 保存失败: {e}")
                 else:
                     logger.warning("调仓分析未生成建议")
                     
@@ -961,6 +981,31 @@ def run_full_analysis(
 
         except Exception as e:
             logger.error(f"飞书文档生成失败: {e}")
+        
+        # === 6. 保存到 Notion（如果配置）===
+        try:
+            from notion_service import get_notion_service
+            notion = get_notion_service()
+            
+            if notion.is_available():
+                logger.info("=" * 60)
+                logger.info("保存分析结果到 Notion")
+                logger.info("=" * 60)
+                
+                # 保存股票分析
+                if results:
+                    if notion.save_stock_analysis(results):
+                        logger.info(f"✅ 股票分析已保存到 Notion ({len(results)} 只)")
+                
+                # 保存大盘复盘
+                if market_report:
+                    if notion.save_market_review(market_report):
+                        logger.info("✅ 大盘复盘已保存到 Notion")
+                
+        except ImportError:
+            logger.debug("notion-client 未安装，跳过 Notion 保存")
+        except Exception as e:
+            logger.error(f"Notion 保存失败: {e}")
         
         logger.info("\n✅ 所有任务执行完成")
         

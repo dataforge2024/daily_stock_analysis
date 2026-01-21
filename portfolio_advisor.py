@@ -249,6 +249,24 @@ class PortfolioAdvisor:
                     df = stock_data[pos.code]
                 else:
                     df, _ = self.data_manager.get_daily_data(pos.code, days=30)
+                    # 尝试获取股票名称
+                    if not pos.name:
+                        try:
+                            import baostock as bs
+                            bs.login()
+                            # 添加交易所前缀
+                            bs_code = f"sh.{pos.code}" if pos.code.startswith('6') else f"sz.{pos.code}"
+                            stock_info = bs.query_stock_basic(code=bs_code)
+                            if stock_info.error_code == '0':
+                                data_list = []
+                                while (stock_info.error_code == '0') & stock_info.next():
+                                    data_list.append(stock_info.get_row_data())
+                                if data_list:
+                                    pos.name = data_list[0][1]  # code_name字段，索引1
+                            bs.logout()
+                        except Exception as e:
+                            logger.debug(f"获取{pos.code}股票名称失败: {e}")
+                            pos.name = pos.code  # 失败则使用代码作为名称
                 
                 if df is None or len(df) < 20:
                     logger.warning(f"[调仓] {pos.code} 数据不足")
@@ -311,7 +329,7 @@ class PortfolioAdvisor:
         advice.latest_price = float(latest['close'])
         advice.pct_chg = float(latest.get('pct_chg', 0))
         advice.trend_status = trend_result.trend_status.value
-        advice.signal = trend_result.signal.value
+        advice.signal = trend_result.buy_signal.value
         
         # 根据信号决定调仓动作
         self._apply_rule_based_advice(advice, trend_result, pos)
@@ -343,27 +361,27 @@ class PortfolioAdvisor:
             pos: 持仓配置
         """
         # 1. 强烈买入信号 → 加仓
-        if trend_result.signal in [BuySignal.STRONG_BUY, BuySignal.BUY]:
+        if trend_result.buy_signal in [BuySignal.STRONG_BUY, BuySignal.BUY]:
             if pos.current_ratio < 80:
                 advice.action = AdjustAction.BUY
                 advice.suggested_ratio = min(
                     pos.current_ratio * self.INCREASE_RATIO,
                     self.MAX_POSITION
                 )
-                advice.reason = f"{trend_result.signal.value}，建议加仓"
+                advice.reason = f"{trend_result.buy_signal.value}，建议加仓"
             else:
                 advice.action = AdjustAction.HOLD
                 advice.suggested_ratio = pos.current_ratio
                 advice.reason = "信号良好，但仓位已较高，建议持有"
         
         # 2. 持有信号 → 保持
-        elif trend_result.signal == BuySignal.HOLD:
+        elif trend_result.buy_signal == BuySignal.HOLD:
             advice.action = AdjustAction.HOLD
             advice.suggested_ratio = pos.current_ratio
             advice.reason = "趋势平稳，建议继续持有"
         
         # 3. 观望信号 → 减仓
-        elif trend_result.signal == BuySignal.WAIT:
+        elif trend_result.buy_signal == BuySignal.WAIT:
             if pos.current_ratio > 30:
                 advice.action = AdjustAction.REDUCE
                 advice.suggested_ratio = max(
@@ -377,10 +395,10 @@ class PortfolioAdvisor:
                 advice.reason = "趋势转弱，仓位已较低，观望"
         
         # 4. 卖出信号 → 清仓
-        elif trend_result.signal in [BuySignal.SELL, BuySignal.STRONG_SELL]:
+        elif trend_result.buy_signal in [BuySignal.SELL, BuySignal.STRONG_SELL]:
             advice.action = AdjustAction.SELL
             advice.suggested_ratio = 0.0
-            advice.reason = f"{trend_result.signal.value}，建议清仓离场"
+            advice.reason = f"{trend_result.buy_signal.value}，建议清仓离场"
             advice.risk_alert = "趋势破坏，及时止损"
         
         # 5. 其他情况 → 保持
@@ -409,7 +427,7 @@ class PortfolioAdvisor:
         
         # 获取完整的分析上下文
         db = get_db()
-        context = db.get_analysis_context(pos.code, days=30)
+        context = db.get_analysis_context(pos.code)
         
         if not context:
             logger.warning(f"[调仓-AI] {pos.code} 获取上下文失败")
@@ -474,9 +492,10 @@ class PortfolioAdvisor:
                 alerts.append("放量下跌，资金出逃")
         
         # 跌破关键支撑
-        if trend_result.support_level > 0:
-            if latest['close'] < trend_result.support_level * 0.98:
-                alerts.append(f"跌破支撑{trend_result.support_level:.2f}")
+        if trend_result.support_levels and len(trend_result.support_levels) > 0:
+            support = trend_result.support_levels[0]  # 使用第一个支撑位
+            if latest['close'] < support * 0.98:
+                alerts.append(f"跌破支撑{support:.2f}")
         
         return "；".join(alerts) if alerts else ""
     

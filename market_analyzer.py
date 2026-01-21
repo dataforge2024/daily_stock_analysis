@@ -360,13 +360,33 @@ class MarketAnalyzer:
                     prompt,
                     generation_config=generation_config,
                 )
-                review = response.text.strip() if response and response.text else None
+                
+                # 检查响应状态
+                if response and hasattr(response, 'candidates') and response.candidates:
+                    candidate = response.candidates[0]
+                    # finish_reason: 0=UNSPECIFIED, 1=STOP, 2=MAX_TOKENS, 3=SAFETY, 4=RECITATION, 5=OTHER
+                    if hasattr(candidate, 'finish_reason') and candidate.finish_reason not in [0, 1]:
+                        logger.warning(f"[大盘] Gemini响应异常: finish_reason={candidate.finish_reason}")
+                        # 尝试从parts获取部分内容
+                        if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                            text_parts = [part.text for part in candidate.content.parts if hasattr(part, 'text')]
+                            if text_parts:
+                                review = ''.join(text_parts).strip()
+                                logger.info(f"[大盘] 从parts获取到部分内容: {len(review)} 字符")
+                            else:
+                                review = None
+                        else:
+                            review = None
+                    else:
+                        review = response.text.strip() if response.text else None
+                else:
+                    review = None
             
             if review:
                 logger.info(f"[大盘] 复盘报告生成成功，长度: {len(review)} 字符")
                 return review
             else:
-                logger.warning("[大盘] 大模型返回为空")
+                logger.warning("[大盘] 大模型返回为空，使用模板生成")
                 return self._generate_template_review(overview, news)
                 
         except Exception as e:

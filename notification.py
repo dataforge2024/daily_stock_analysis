@@ -1452,7 +1452,7 @@ class NotificationService:
         return success_count == total_chunks
     
     def _send_feishu_message(self, content: str) -> bool:
-        """发送单条飞书消息（优先使用 Markdown 卡片）"""
+        """发送单条飞书消息（使用纯文本格式）"""
         def _post_payload(payload: Dict[str, Any]) -> bool:
             logger.debug(f"飞书请求 URL: {self._feishu_url}")
             logger.debug(f"飞书请求 payload 长度: {len(content)} 字符")
@@ -1483,33 +1483,7 @@ class NotificationService:
                 logger.error(f"响应内容: {response.text}")
                 return False
 
-        # 1) 优先使用交互卡片（支持 Markdown 渲染）
-        card_payload = {
-            "msg_type": "interactive",
-            "card": {
-                "config": {"wide_screen_mode": True},
-                "header": {
-                    "title": {
-                        "tag": "plain_text",
-                        "content": "A股智能分析报告"
-                    }
-                },
-                "elements": [
-                    {
-                        "tag": "div",
-                        "text": {
-                            "tag": "lark_md",
-                            "content": content
-                        }
-                    }
-                ]
-            }
-        }
-
-        if _post_payload(card_payload):
-            return True
-
-        # 2) 回退为普通文本消息
+        # 直接发送纯文本消息（不使用交互卡片）
         text_payload = {
             "msg_type": "text",
             "content": {
@@ -2550,14 +2524,14 @@ def send_portfolio_advice(portfolio_advice) -> bool:
     """
     service = get_notification_service()
     
-    # 生成调仓报告
+    # 生成调仓报告（已经是格式化的文本）
     report = portfolio_advice.format_report()
     
     # 保存到本地
     filename = f"portfolio_advice_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     service.save_report_to_file(report, filename=filename)
     
-    # 推送
+    # 推送（直接发送文本格式）
     logger.info("[通知] 发送持仓调仓建议...")
     return service.send(report)
 

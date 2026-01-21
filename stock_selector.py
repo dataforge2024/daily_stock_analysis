@@ -861,7 +861,7 @@ class StockSelector:
                 
                 # 获取完整的分析上下文（包含技术面、实时行情、筹码等）
                 db = get_db()
-                context = db.get_analysis_context(stock.code, days=30)
+                context = db.get_analysis_context(stock.code)
                 
                 if not context:
                     logger.warning(f"[AI分析] {stock.code} 获取上下文失败，跳过")

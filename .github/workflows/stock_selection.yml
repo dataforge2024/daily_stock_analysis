@@ -27,31 +27,14 @@ on:
       top_n:
         description: '推荐股票数量'
         required: true
-        default: '3'
+        default: '10'
         type: choice
         options:
           - '3'
           - '5'
           - '10'
-      
-      test_mode:
-        description: '测试模式（随机抽取少量股票）'
-        required: false
-        default: 'false'
-        type: choice
-        options:
-          - 'false'
-          - 'true'
-      
-      test_sample_size:
-        description: '测试模式样本数量'
-        required: false
-        default: '30'
-        type: choice
-        options:
+          - '15'
           - '20'
-          - '30'
-          - '50'
 
 # 环境变量
 env:
@@ -95,23 +78,53 @@ jobs:
       - name: ⚙️ 配置环境
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || secrets.GEMINI_MODEL || 'gemini-3-flash-preview' }}
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
-          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
-          TEST_MODE: ${{ github.event.inputs.test_mode || 'false' }}
-          TEST_SAMPLE_SIZE: ${{ github.event.inputs.test_sample_size || '30' }}
+          TAVILY_API_KEYS: ${{ secrets.TAVILY_API_KEYS }}
+          BOCHA_API_KEYS: ${{ secrets.BOCHA_API_KEYS }}
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
+          STOCK_POOL_INPUT: ${{ github.event.inputs.stock_pool || 'hs300' }}
+          TOP_N_INPUT: ${{ github.event.inputs.top_n || '10' }}
         run: |
+          # 映射股票池代号到中文名称
+          case "${STOCK_POOL_INPUT}" in
+            hs300)
+              STOCK_POOLS="沪深300"
+              ;;
+            zz500)
+              STOCK_POOLS="中证500"
+              ;;
+            all)
+              STOCK_POOLS="沪深300,中证500"
+              ;;
+            *)
+              STOCK_POOLS="沪深300"
+              ;;
+          esac
+          
           # 创建 .env 文件
           cat > .env << EOF
           # AI API Keys
           GEMINI_API_KEY=${GEMINI_API_KEY}
-          TAVILY_API_KEY=${TAVILY_API_KEY}
+          GEMINI_MODEL=${GEMINI_MODEL}
+          TAVILY_API_KEYS=${TAVILY_API_KEYS}
+          BOCHA_API_KEYS=${BOCHA_API_KEYS}
           
           # 数据源配置
           TUSHARE_TOKEN=${TUSHARE_TOKEN}
           
-          # 测试模式配置
-          TEST_MODE=${TEST_MODE}
-          TEST_SAMPLE_SIZE=${TEST_SAMPLE_SIZE}
+          # 股票池配置（智能选股）
+          STOCK_POOLS=${STOCK_POOLS}
+          RECOMMEND_ENABLED=true
+          RECOMMEND_TOP_N=${TOP_N_INPUT}
+          
+          # 关闭自选股分析（只做选股推荐）
+          STOCK_LIST=
+          
+          # 通知配置
+          FEISHU_WEBHOOK_URL=${FEISHU_WEBHOOK_URL}
+          WECHAT_WEBHOOK_URL=${WECHAT_WEBHOOK_URL}
           
           # 日志配置
           LOG_LEVEL=INFO
@@ -122,77 +135,55 @@ jobs:
           EOF
           
           echo "✅ 环境配置完成"
-          echo "🧪 测试模式: ${TEST_MODE}"
-          if [ "${TEST_MODE}" = "true" ]; then
-            echo "📊 测试样本数: ${TEST_SAMPLE_SIZE}"
-          fi
+          echo "📊 股票池: ${STOCK_POOLS}"
+          echo "🔢 推荐数量: ${TOP_N_INPUT}"
       
       # 6. 运行智能选股
       - name: 🚀 运行智能选股
         id: stock_selection
         run: |
-          # 设置默认参数（手动触发时会被覆盖）
-          STOCK_POOL=${{ github.event.inputs.stock_pool || 'hs300' }}
-          TOP_N=${{ github.event.inputs.top_n || '3' }}
+          # 创建必要的目录
+          mkdir -p data logs reports
           
-          echo "📊 股票池: $STOCK_POOL"
-          echo "🔢 推荐数量: $TOP_N"
+          echo "========================================="
+          echo "开始运行AI智能选股"
+          echo "时间: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')"
+          echo "========================================="
           
-          # 运行选股脚本
-          python3 test_ai_selection.py \
-            --pool $STOCK_POOL \
-            --top-n $TOP_N \
-            --output results/stock_selection_$(date +%Y%m%d).json
+          # 运行 main.py（会根据 .env 中的 STOCK_POOLS 执行选股）
+          python3 main.py
           
+          echo "========================================="
           echo "✅ 选股完成"
+          echo "=========================================" 
       
       # 7. 上传结果
       - name: 📤 上传选股结果
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: stock-selection-results-${{ github.run_number }}
           path: |
-            results/stock_selection_*.json
-            logs/*.log
+            reports/
+            logs/
           retention-days: 30  # 保留 30 天
       
-      # 8. 发送通知（可选）
-      - name: 📧 发送结果通知
-        if: success()
-        env:
-          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+      # 8. 显示结果摘要
+      - name: 📊 显示结果摘要
+        if: always()
         run: |
-          # 如果配置了飞书 Webhook，发送通知
-          if [ -n "$FEISHU_WEBHOOK" ]; then
-            python3 << EOF
-          import json
-          import requests
-          from datetime import datetime
-          
-          webhook_url = "$FEISHU_WEBHOOK"
-          
-          # 读取选股结果
-          with open("results/stock_selection_$(date +%Y%m%d).json", "r") as f:
-              results = json.load(f)
-          
-          # 构建消息
-          message = {
-              "msg_type": "text",
-              "content": {
-                  "text": f"📊 AI智能选股完成\\n时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}\\n推荐股票: {len(results)} 只\\n\\n详情请查看 GitHub Actions 结果"
-              }
-          }
-          
-          requests.post(webhook_url, json=message)
-          EOF
+          echo "========================================="
+          echo "任务执行完成"
+          echo "========================================="
+          if [ -d "reports" ]; then
+            echo "生成的报告:"
+            ls -lh reports/
           fi
-      
-      # 9. 失败通知
-      - name: ⚠️ 失败通知
-        if: failure()
-        run: |
-          echo "❌ 选股任务失败"
-          echo "📋 请查看日志了解详情"
+          if [ -d "logs" ]; then
+            echo ""
+            echo "日志文件:"
+            ls -lh logs/
+          fi
 
 # 工作流程权限
 permissions:
